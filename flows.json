@@ -4449,7 +4449,7 @@
         "type": "function",
         "z": "521d26a7dba2b3ee",
         "name": "Valori di performance by Claude",
-        "func": "console.log(\"PLAYER ECONOMIC ANALYSIS BEGINS\");\n\nconsole.log(\"msg._SPECIALTIES\",msg._SPECIALTIES )\nconsole.log(\"msg._SPECIALTIESIndex\",msg._SPECIALTIESIndex )\n\nlet TheFootballTree = msg.TheFootballTree;\n\nconsole.log(\"CALCULATING PERFORMANCE VALUES\");\nflow.get(\"logmsg\").message = \"CALCULATING PERFORMANCE VALUES\"\nnode.log(flow.get(\"logmsg\"))\n\nlet maxAbsind = 0; // Used in fatmol calculation\nlet maxMinutes = 0; // Used in performance calculation\nlet totFatmol = 0; // Used in effectiveness calculation\nlet maxFatmol = 0; // Used in effectiveness calculation\nlet numOfValidPlayers = 0;\nlet playersByGroupAndCluster = {}; // Initialize here so it's available throughout the code\n\n\ntry {\n    // Costruiamo una mappa per accesso rapido ai dati aggregati\n    const sumsMap = {};\n    msg.payload.forEach(p => {\n        sumsMap[p.playerId] = {\n            sum_avgMicroIndex: p.sum_avgMicroIndex,\n            sum_avgMacroIndex: p.sum_avgMacroIndex\n        };\n    });\n\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Backup degli attuali valori\n                player.currentAvgMicroIndex = player.avgMicroIndex;\n                player.currentAvgMacroIndex = player.avgMacroIndex;\n\n                // Trova i dati aggregati da msg.payload\n                const sums = sumsMap[player.playerId];\n                if (sums) {\n                    // Applica la formula\n                    player.avgMicroIndex = (player.avgMicroIndex / 3) + (sums.sum_avgMicroIndex/3);\n                    player.avgMacroIndex = (player.avgMacroIndex / 3) + (sums.sum_avgMacroIndex/3);\n                } else {\n                    // Se non trova corrispondenza, lascia invariato o gestisci come preferisci\n                    //console.log(`Nessun dato aggregato per playerId: ${player.playerId}`);\n                }\n            });\n        });\n    });\n} catch (e) {\n    console.log(\"Errore durante l'elaborazione degli indici:\", e);\n}\n\nmsg.payload=null; //svuotiamo la memoria\n\n\ntry {\n    console.log(\"Calculating maxMinutes\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                maxMinutes = player.minutes > maxMinutes ? player.minutes : maxMinutes;\n            });\n        });\n    });\n    \n    console.log(\"maxMinutes: \" + maxMinutes);\n    \n    // Override with standard seasonal maximum (90 min * 38 matches * 1.5 to account for extra time)\n    maxMinutes = 5130;\n    \n    console.log(\"Calculating Performance, Absind, Rising Star, MAXABSIND\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Calculate minute share as percentage of maximum possible minutes\n                let minuteShare = ((player.minutes || 0) / maxMinutes) * 100;\n                \n                // Define age threshold - use 23 as default unless simulating\n                let ageThreshold = player.simulating === true ? 16 : 23;\n                \n                // Create a mixed index with 90% micro and 10% macro\n                let mixedMicroMacroIndex = (player.avgMicroIndex || 0) * 0.9 + (player.avgMacroIndex || 0) * 0.1;\n                \n                // Initialize performance with raw mixed index\n                player.performance = mixedMicroMacroIndex;\n                \n                // Different calculation based on player age\n                if ((player.age || 0) >= ageThreshold) {\n                    // Older players - performance scales with minutes played\n                    if (minuteShare < 10) {\n                        player.performance = (mixedMicroMacroIndex * player.minutes) / maxMinutes;\n                    }\n                    else if (minuteShare >= 10 && minuteShare < 15) {\n                        player.performance = mixedMicroMacroIndex * 0.2;\n                    }\n                    else if (minuteShare >= 15 && minuteShare < 20) {\n                        player.performance = mixedMicroMacroIndex * 0.4;\n                    }\n                    else if (minuteShare >= 20 && minuteShare < 25) {\n                        player.performance = mixedMicroMacroIndex * 0.65;\n                    }\n                    else if (minuteShare >= 25 && minuteShare < 30) {\n                        player.performance = mixedMicroMacroIndex * 0.85;\n                    }\n                    else if (minuteShare >= 30) {\n                        player.performance = mixedMicroMacroIndex;\n                    } else {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                } else {\n                    // Younger players - different thresholds\n                    if ((player.minutes || 0) < 200) {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                    else if ((player.minutes || 0) >= 200 && (player.minutes || 0) < 300) {\n                        player.performance = mixedMicroMacroIndex * 0.3;\n                    }\n                    else if ((player.minutes || 0) >= 300 && (player.minutes || 0) < 400) {\n                        player.performance = mixedMicroMacroIndex * 0.5;\n                    }\n                    else if ((player.minutes || 0) >= 400 && (player.minutes || 0) < 500) {\n                        player.performance = mixedMicroMacroIndex * 0.8;\n                    }\n                    else if ((player.minutes || 0) >= 500) {\n                        player.performance = mixedMicroMacroIndex;\n                    } else {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                }\n                \n                // Ensure performance is not null/undefined\n                if (player.performance === undefined || player.performance === null) {\n                    player.performance = 0;\n                }\n                \n                // ABSIND calculation - combines performance, experience and role weight\n                player.absind = ((((player.performance * 0.9) + ((player.experience || 0) * 0.1)) * \n                                (player.latestRoleWeight || 1)) / 39) + 1;\n                \n                // Track maximum absind for later calculations\n                maxAbsind = maxAbsind > player.absind ? maxAbsind : player.absind;\n                \n                numOfValidPlayers++;\n            });\n        });\n    });\n    \n    // Group players by role group and cluster to calculate averages\n    console.log(\"Calculating avg performance for groups and clusters\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                if (player.latestRoleGroup !== undefined && player.latestLeagueCluster !== undefined) {\n                    // Initialize group and cluster if they don't exist\n                    if (playersByGroupAndCluster[player.latestRoleGroup] === undefined) {\n                        playersByGroupAndCluster[player.latestRoleGroup] = {};\n                    }\n                    \n                    if (playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster] === undefined) {\n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster] = { \n                            performance: 0, \n                            count: 0, \n                            avgPerformance: 0\n                        };\n                    }\n                    \n                    // Add this player's performance to the group total\n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].performance += \n                        player.performance || 0;\n                    \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].count++;\n                    \n                    // Calculate the average for this group/cluster\n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance = \n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].performance / \n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].count;\n                }\n            });\n        });\n    });\n    \n    let maxPartialRisingStar = 0;\n    let maxPartialEmerging = 0;\n    \n    console.log(\"Calculating Emerging\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // RISING STAR calculation\n                // New rule: cluster=1, age<24, performance>60, minute share>0.175\n                player.risingStar = (\n                    (player.performance || 0) > 60 && \n                    (player.age || 0) < 24 && \n                    (player.latestLeagueCluster || 99) < 4 && \n                    (player.avgPlayedMinuteShare || 0) > 0.175\n                ) ? true : false;\n                \n                if (player.playerId == 'b2e12l3s3dxgyr8d2rk5qb9ey' ) {\n                    player.risingStar=false;\n                }\n                \n                player.perfRatio = 0\n                player.roleClusterAvgPerformance = 0;\n                \n                // PARTIAL RISING STAR\n                player.tentativePartialRisingStar = 0;\n                \n                if (player.latestRoleGroup !== undefined && \n                    player.latestLeagueCluster !== undefined && \n                    playersByGroupAndCluster[player.latestRoleGroup] && \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                        // Calculate performance ratio versus average for same group/cluster\n                    player.perfRatio = (player.performance || 0) / \n                            playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                    \n                    player.roleClusterAvgPerformance = playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                    \n                    if (!player.risingStar && (player.age || 0) < 24 && (player.latestLeagueCluster || 0) === 1) {\n                        \n                        \n                            \n                        player.tentativePartialRisingStar = player.perfRatio > 1.25 && player.perfRatio <= 2 ? (player.perfRatio / 1.25) - 1 : 0;\n                    }\n                }\n                \n                // Track maximum for normalization later\n                maxPartialRisingStar = maxPartialRisingStar > player.tentativePartialRisingStar ? \n                    maxPartialRisingStar : player.tentativePartialRisingStar;\n                \n                // EMERGING calculation\n                player.emerging = false;\n                \n                if (player.superStar) {\n                    player.emerging = false;\n                } else if (player.risingStar) {\n                    player.emerging = false;\n                } else if ((player.age || 0) >= 30) {\n                    player.emerging = false;\n                } else if ((player.latestLeagueCluster || 99) < 4 && (player.alert || 0) > 3) {\n                    player.emerging = true;\n                } else if ((player.currentClubCluster || 99) < 5 && \n                          ((player.performance || 0) * (player.latestRoleWeight || 1)) > 55 && \n                          (player.avgPlayedMinuteShare || 0) > 0.35) {\n                    player.emerging = true;\n                } else if (player.latestRoleGroup !== undefined && \n                          player.latestLeagueCluster !== undefined && \n                          playersByGroupAndCluster[player.latestRoleGroup] && \n                          playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                    \n                    // Different multiplier based on league cluster\n                    if ((player.latestLeagueCluster || 0) === 1 && \n                        (player.avgPlayedMinuteShare || 0) > 0.35 && \n                        (player.performance || 0) > 2 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else if ((player.latestLeagueCluster || 0) === 2 && \n                               (player.avgPlayedMinuteShare || 0) > 0.35 && \n                               (player.performance || 0) > 3 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else if ((player.latestLeagueCluster || 0) === 3 && \n                               (player.avgPlayedMinuteShare || 0) > 0.35 && \n                               (player.performance || 0) > 4 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else {\n                        player.emerging = false;\n                    }\n                }\n                \n                // PARTIAL EMERGING\n                player.tentativePartialEmerging = 0;\n                \n                if (player.latestRoleGroup !== undefined && \n                    player.latestLeagueCluster !== undefined && \n                    playersByGroupAndCluster[player.latestRoleGroup] && \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                    \n                    if (!player.emerging && !player.superStar && (player.age || 0) < 30 && (player.latestLeagueCluster || 0) === 1) {\n                        let perfRatio = (player.performance || 0) / \n                            playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                            \n                        player.tentativePartialEmerging = perfRatio > 1.25 && perfRatio <= 2 ? perfRatio - 1 : 0;\n                    }\n                }\n                \n                // Track maximum for normalization later\n                maxPartialEmerging = maxPartialEmerging > player.tentativePartialEmerging ? \n                    maxPartialEmerging : player.tentativePartialEmerging;\n            });\n        });\n    });\n    \n    console.log(\"Calculating FATMOL, Final Emerging and Rising\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Normalize partial values based on maximums\n                // Prevent division by zero\n                player.partialEmerging = maxPartialEmerging > 0 ? \n                    (player.tentativePartialEmerging || 0) / maxPartialEmerging : 0;\n                    \n                player.partialEmerging = player.risingStar ? 0 : player.partialEmerging;    \n                    \n                player.partialEmerging = player.partialEmerging > 1 ? 1 : player.partialEmerging;\n                \n                player.partialRisingStar = maxPartialRisingStar > 0 ? \n                    (player.tentativePartialRisingStar || 0) / maxPartialRisingStar : 0;\n                    \n                player.partialRisingStar = player.emerging ? 0 : player.partialRisingStar;\n                \n                \n                player.partialRisingStar = player.partialRisingStar > 1 ? 1 : player.partialRisingStar;\n                \n                \n                player.partialEmerging = player.partialRisingStar > 0 ? 0 : player.partialEmerging;\n                \n               \n                \n                /** \n                \n                ECCEZIONI TABELLINA QUI\n                */\n                \n                \n                if (msg._SPECIALTIESIndex[player.playerId] !== undefined) {\n                    \n                    const playerSpecialties = msg._SPECIALTIES[msg._SPECIALTIESIndex[player.playerId]]\n                    \n                    \n                    player.nationalTeamPlayer = !!playerSpecialties.nationalTeamPlayer\n                    player.superstar = !!playerSpecialties.superstar\n                    player.risingStar =!! playerSpecialties.risingStar\n                    player.emerging = !!playerSpecialties.emerging\n                    player.partialRisingStar = playerSpecialties.partialRisingStar\n                    player.partialEmerging = playerSpecialties.partialEmerging\n                    \n                    console.log(\"SPECIALTY OVERRIDE \", playerSpecialties)\n\n                }\n                    \n                \n                \n                \n                \n                \n                \n                \n                // Calculate various awards/bonuses\n                let nteamAward = player.nationalTeamPlayer ? 0.33 : 0; \n                let emergingAward = player.emerging ? 0.33 : 0; \n                let partialEmergingAward = player.partialEmerging / 3;\n                let risingStarAward = player.risingStar ? 0.33 : 0; \n                let partialRisingStarAward = player.partialRisingStar / 3;\n                let superStarAward = player.superStar ? 0.75 : 0; \n                \n                // FATMOL calculation combines absind with all awards\n                let tmpFatmol = (player.absind || 0) + nteamAward + emergingAward + \n                               partialEmergingAward + risingStarAward + \n                               partialRisingStarAward + superStarAward;\n                \n                player.fatmol = tmpFatmol;\n                \n                // Track totals and maximums for later calculations\n                totFatmol += player.fatmol;\n                maxFatmol = maxFatmol > player.fatmol ? maxFatmol : player.fatmol;\n            });\n        });\n    });\n    \n    // Calculate average fatmol\n    const avgFatmol = numOfValidPlayers > 0 ? totFatmol / numOfValidPlayers : 0;\n    \n    let minNotZeroEffectiveness = 100;\n    \n    console.log(\"Calculating EFFECTIVENESS AND MATURITY\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // EFFECTIVENESS calculation\n                player.effectiveness = maxFatmol > 0 ? ((player.fatmol || 0) / maxFatmol) * 100 : 0;\n                \n                // Track minimum non-zero effectiveness for scaling\n                if (player.effectiveness > 0 && player.effectiveness < minNotZeroEffectiveness) {\n                    minNotZeroEffectiveness = player.effectiveness;\n                }\n                \n                // MATURITY calculation\n                let emergingReward = player.emerging ? 0.5 : 0;\n                let risingStarReward = player.risingStar ? 2 : 0;\n                \n                // Complex maturity formula based on age, fatmol, and rewards\n                if ((player.age || 0) > 33) {\n                    player.maturity = 0;\n                } else {\n                    if ((player.fatmol || 0) < 1.75) {\n                        player.maturity = (player.age || 0) < 23 ? 3 : 1;\n                    } else {\n                        player.maturity = (player.age || 0) < 29 ? 4 : (33 - (player.age || 0));\n                    }\n                    \n                    // Add rewards\n                    player.maturity += emergingReward + risingStarReward;\n                }\n            });\n        });\n    });\n    \n    msg.minNotZeroEffectiveness = minNotZeroEffectiveness;\n    \n    console.log(\"Calculating MOD EFFECTIVENESS\");\n    \n    let minNotZeroUniqueness = 100;\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Modified effectiveness scales the range to use full 0-100\n                player.modEffectiveness = 0;\n                if (minNotZeroEffectiveness < 100) {  // Prevent division by zero\n                    player.modEffectiveness = (((player.effectiveness || 0) - minNotZeroEffectiveness) /\n                                           (100 - minNotZeroEffectiveness)) * 100;\n                }\n                \n                // Calculate uniqueness as weighted average of mod effectiveness and previous uniqueness\n                if (player.effectiveness > 0) {\n                    player.latestUniqueness = (0.7 * player.modEffectiveness) + \n                                             ((player.latestUniqueness || 0) * 0.3);\n                } else {\n                    player.latestUniqueness = 0.7 * player.modEffectiveness;\n                }\n                \n                // Apply scaling transformation to uniqueness\n                if (player.latestUniqueness > 79.1) {\n                    player.latestUniqueness = 100;\n                } else if (player.latestUniqueness > 0 && player.latestUniqueness <= 79.1) {\n                    player.latestUniqueness = Math.sqrt(player.latestUniqueness / 79.1) * 100;\n                }\n                \n                // Track minimum non-zero uniqueness\n                if (player.latestUniqueness > 0 && player.latestUniqueness < minNotZeroUniqueness) {\n                    minNotZeroUniqueness = player.latestUniqueness;\n                }\n            });\n        });\n    });\n    \n    msg.minNotZeroUniqueness = minNotZeroUniqueness;\n    \n    // RELATIVE WEIGHT IN CLUB\n    console.log(\"Calculating RELATIVE WEIGHT IN CLUB\");\n    \n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            // Initialize club totals\n            club.totFatmol = 0;\n            club.exponentialTotFatmol = 0;\n            \n            // Sum up player contributions\n            club.Players.forEach(player => { \n                club.totFatmol += player.fatmol || 0;\n                club.exponentialTotFatmol += Math.pow(player.fatmol || 0, 1.7);\n            });\n        });\n    });\n    \n} catch (e) {\n    console.log(\"Error in economic analysis:\", e);\n}\n\n\nreturn msg;",
+        "func": "console.log(\"PLAYER ECONOMIC ANALYSIS BEGINS\");\n\nconsole.log(\"msg._SPECIALTIES\",msg._SPECIALTIES )\nconsole.log(\"msg._SPECIALTIESIndex\",msg._SPECIALTIESIndex )\n\nlet TheFootballTree = msg.TheFootballTree;\n\nconsole.log(\"CALCULATING PERFORMANCE VALUES\");\nflow.get(\"logmsg\").message = \"CALCULATING PERFORMANCE VALUES\"\nnode.log(flow.get(\"logmsg\"))\n\nlet maxAbsind = 0; // Used in fatmol calculation\nlet maxMinutes = 0; // Used in performance calculation\nlet totFatmol = 0; // Used in effectiveness calculation\nlet maxFatmol = 0; // Used in effectiveness calculation\nlet numOfValidPlayers = 0;\nlet playersByGroupAndCluster = {}; // Initialize here so it's available throughout the code\n\n\ntry {\n    // Costruiamo una mappa per accesso rapido ai dati aggregati\n    const sumsMap = {};\n    msg.payload.forEach(p => {\n        sumsMap[p.playerId] = {\n            sum_avgMicroIndex: p.sum_avgMicroIndex,\n            sum_avgMacroIndex: p.sum_avgMacroIndex\n        };\n    });\n\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Backup degli attuali valori\n                player.currentAvgMicroIndex = player.avgMicroIndex;\n                player.currentAvgMacroIndex = player.avgMacroIndex;\n\n                // Trova i dati aggregati da msg.payload\n                const sums = sumsMap[player.playerId];\n                if (sums) {\n                    // Applica la formula\n                    player.avgMicroIndex = (player.avgMicroIndex / 3) + (sums.sum_avgMicroIndex/3);\n                    player.avgMacroIndex = (player.avgMacroIndex / 3) + (sums.sum_avgMacroIndex/3);\n                } else {\n                    // Se non trova corrispondenza, lascia invariato o gestisci come preferisci\n                    //console.log(`Nessun dato aggregato per playerId: ${player.playerId}`);\n                }\n            });\n        });\n    });\n} catch (e) {\n    console.log(\"Errore durante l'elaborazione degli indici:\", e);\n}\n\nmsg.payload=null; //svuotiamo la memoria\n\n\ntry {\n    console.log(\"Calculating maxMinutes\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                maxMinutes = player.minutes > maxMinutes ? player.minutes : maxMinutes;\n            });\n        });\n    });\n    \n    console.log(\"maxMinutes: \" + maxMinutes);\n    \n    // Override with standard seasonal maximum (90 min * 38 matches * 1.5 to account for extra time)\n    maxMinutes = 5130;\n    \n    console.log(\"Calculating Performance, Absind, Rising Star, MAXABSIND\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Calculate minute share as percentage of maximum possible minutes\n                let minuteShare = ((player.minutes || 0) / maxMinutes) * 100;\n                \n                // Define age threshold - use 23 as default unless simulating\n                let ageThreshold = player.simulating === true ? 16 : 23;\n                \n                // Create a mixed index with 90% micro and 10% macro\n                let mixedMicroMacroIndex = (player.avgMicroIndex || 0) * 0.9 + (player.avgMacroIndex || 0) * 0.1;\n                \n                // Initialize performance with raw mixed index\n                player.performance = mixedMicroMacroIndex;\n                \n                // Different calculation based on player age\n                if ((player.age || 0) >= ageThreshold) {\n                    // Older players - performance scales with minutes played\n                    if (minuteShare < 10) {\n                        player.performance = (mixedMicroMacroIndex * player.minutes) / maxMinutes;\n                    }\n                    else if (minuteShare >= 10 && minuteShare < 15) {\n                        player.performance = mixedMicroMacroIndex * 0.2;\n                    }\n                    else if (minuteShare >= 15 && minuteShare < 20) {\n                        player.performance = mixedMicroMacroIndex * 0.4;\n                    }\n                    else if (minuteShare >= 20 && minuteShare < 25) {\n                        player.performance = mixedMicroMacroIndex * 0.65;\n                    }\n                    else if (minuteShare >= 25 && minuteShare < 30) {\n                        player.performance = mixedMicroMacroIndex * 0.85;\n                    }\n                    else if (minuteShare >= 30) {\n                        player.performance = mixedMicroMacroIndex;\n                    } else {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                } else {\n                    // Younger players - different thresholds\n                    if ((player.minutes || 0) < 200) {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                    else if ((player.minutes || 0) >= 200 && (player.minutes || 0) < 300) {\n                        player.performance = mixedMicroMacroIndex * 0.3;\n                    }\n                    else if ((player.minutes || 0) >= 300 && (player.minutes || 0) < 400) {\n                        player.performance = mixedMicroMacroIndex * 0.5;\n                    }\n                    else if ((player.minutes || 0) >= 400 && (player.minutes || 0) < 500) {\n                        player.performance = mixedMicroMacroIndex * 0.8;\n                    }\n                    else if ((player.minutes || 0) >= 500) {\n                        player.performance = mixedMicroMacroIndex;\n                    } else {\n                        player.performance = (mixedMicroMacroIndex * (player.minutes || 0)) / maxMinutes;\n                    }\n                }\n                \n                // Ensure performance is not null/undefined\n                if (player.performance === undefined || player.performance === null) {\n                    player.performance = 0;\n                }\n                \n                //Aggiunto 2025-07-04 per anomalia su Haaland (colpa di dominance)\n                if (player.playerId == 'atzboo800gv7gic2rgvgo0kq1') {\n                    player.performance = 90;\n                }\n                \n                // ABSIND calculation - combines performance, experience and role weight\n                player.absind = ((((player.performance * 0.9) + ((player.experience || 0) * 0.1)) * \n                                (player.latestRoleWeight || 1)) / 39) + 1;\n                \n                // Track maximum absind for later calculations\n                maxAbsind = maxAbsind > player.absind ? maxAbsind : player.absind;\n                \n                numOfValidPlayers++;\n            });\n        });\n    });\n    \n    // Group players by role group and cluster to calculate averages\n    console.log(\"Calculating avg performance for groups and clusters\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                if (player.latestRoleGroup !== undefined && player.latestLeagueCluster !== undefined) {\n                    // Initialize group and cluster if they don't exist\n                    if (playersByGroupAndCluster[player.latestRoleGroup] === undefined) {\n                        playersByGroupAndCluster[player.latestRoleGroup] = {};\n                    }\n                    \n                    if (playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster] === undefined) {\n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster] = { \n                            performance: 0, \n                            count: 0, \n                            avgPerformance: 0\n                        };\n                    }\n                    \n                    // Add this player's performance to the group total\n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].performance += \n                        player.performance || 0;\n                    \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].count++;\n                    \n                    // Calculate the average for this group/cluster\n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance = \n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].performance / \n                        playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].count;\n                }\n            });\n        });\n    });\n    \n    let maxPartialRisingStar = 0;\n    let maxPartialEmerging = 0;\n    \n    console.log(\"Calculating Emerging\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // RISING STAR calculation\n                // New rule: cluster=1, age<24, performance>60, minute share>0.175\n                player.risingStar = (\n                    (player.performance || 0) > 60 && \n                    (player.age || 0) < 24 && \n                    (player.latestLeagueCluster || 99) < 4 && \n                    (player.avgPlayedMinuteShare || 0) > 0.175\n                ) ? true : false;\n                \n                if (player.playerId == 'b2e12l3s3dxgyr8d2rk5qb9ey' ) {\n                    player.risingStar=false;\n                }\n                \n                player.perfRatio = 0\n                player.roleClusterAvgPerformance = 0;\n                \n                // PARTIAL RISING STAR\n                player.tentativePartialRisingStar = 0;\n                \n                if (player.latestRoleGroup !== undefined && \n                    player.latestLeagueCluster !== undefined && \n                    playersByGroupAndCluster[player.latestRoleGroup] && \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                        // Calculate performance ratio versus average for same group/cluster\n                    player.perfRatio = (player.performance || 0) / \n                            playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                    \n                    player.roleClusterAvgPerformance = playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                    \n                    if (!player.risingStar && (player.age || 0) < 24 && (player.latestLeagueCluster || 0) === 1) {\n                        \n                        \n                            \n                        player.tentativePartialRisingStar = player.perfRatio > 1.25 && player.perfRatio <= 2 ? (player.perfRatio / 1.25) - 1 : 0;\n                    }\n                }\n                \n                // Track maximum for normalization later\n                maxPartialRisingStar = maxPartialRisingStar > player.tentativePartialRisingStar ? \n                    maxPartialRisingStar : player.tentativePartialRisingStar;\n                \n                // EMERGING calculation\n                player.emerging = false;\n                \n                if (player.superStar) {\n                    player.emerging = false;\n                } else if (player.risingStar) {\n                    player.emerging = false;\n                } else if ((player.age || 0) >= 30) {\n                    player.emerging = false;\n                } else if ((player.latestLeagueCluster || 99) < 4 && (player.alert || 0) > 3) {\n                    player.emerging = true;\n                } else if ((player.currentClubCluster || 99) < 5 && \n                          ((player.performance || 0) * (player.latestRoleWeight || 1)) > 55 && \n                          (player.avgPlayedMinuteShare || 0) > 0.35) {\n                    player.emerging = true;\n                } else if (player.latestRoleGroup !== undefined && \n                          player.latestLeagueCluster !== undefined && \n                          playersByGroupAndCluster[player.latestRoleGroup] && \n                          playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                    \n                    // Different multiplier based on league cluster\n                    if ((player.latestLeagueCluster || 0) === 1 && \n                        (player.avgPlayedMinuteShare || 0) > 0.35 && \n                        (player.performance || 0) > 2 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else if ((player.latestLeagueCluster || 0) === 2 && \n                               (player.avgPlayedMinuteShare || 0) > 0.35 && \n                               (player.performance || 0) > 3 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else if ((player.latestLeagueCluster || 0) === 3 && \n                               (player.avgPlayedMinuteShare || 0) > 0.35 && \n                               (player.performance || 0) > 4 * playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance) {\n                        player.emerging = true;\n                    } else {\n                        player.emerging = false;\n                    }\n                }\n                \n                // PARTIAL EMERGING\n                player.tentativePartialEmerging = 0;\n                \n                if (player.latestRoleGroup !== undefined && \n                    player.latestLeagueCluster !== undefined && \n                    playersByGroupAndCluster[player.latestRoleGroup] && \n                    playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster]) {\n                    \n                    if (!player.emerging && !player.superStar && (player.age || 0) < 30 && (player.latestLeagueCluster || 0) === 1) {\n                        let perfRatio = (player.performance || 0) / \n                            playersByGroupAndCluster[player.latestRoleGroup][player.latestLeagueCluster].avgPerformance;\n                            \n                        player.tentativePartialEmerging = perfRatio > 1.25 && perfRatio <= 2 ? perfRatio - 1 : 0;\n                    }\n                }\n                \n                // Track maximum for normalization later\n                maxPartialEmerging = maxPartialEmerging > player.tentativePartialEmerging ? \n                    maxPartialEmerging : player.tentativePartialEmerging;\n            });\n        });\n    });\n    \n    console.log(\"Calculating FATMOL, Final Emerging and Rising\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Normalize partial values based on maximums\n                // Prevent division by zero\n                player.partialEmerging = maxPartialEmerging > 0 ? \n                    (player.tentativePartialEmerging || 0) / maxPartialEmerging : 0;\n                    \n                player.partialEmerging = player.risingStar ? 0 : player.partialEmerging;    \n                    \n                player.partialEmerging = player.partialEmerging > 1 ? 1 : player.partialEmerging;\n                \n                player.partialRisingStar = maxPartialRisingStar > 0 ? \n                    (player.tentativePartialRisingStar || 0) / maxPartialRisingStar : 0;\n                    \n                player.partialRisingStar = player.emerging ? 0 : player.partialRisingStar;\n                \n                \n                player.partialRisingStar = player.partialRisingStar > 1 ? 1 : player.partialRisingStar;\n                \n                \n                player.partialEmerging = player.partialRisingStar > 0 ? 0 : player.partialEmerging;\n                \n               \n                \n                /** \n                \n                ECCEZIONI TABELLINA QUI\n                */\n                \n                \n                if (msg._SPECIALTIESIndex[player.playerId] !== undefined) {\n                    \n                    const playerSpecialties = msg._SPECIALTIES[msg._SPECIALTIESIndex[player.playerId]]\n                    \n                    \n                    player.nationalTeamPlayer = !!playerSpecialties.nationalTeamPlayer\n                    player.superstar = !!playerSpecialties.superstar\n                    player.risingStar =!! playerSpecialties.risingStar\n                    player.emerging = !!playerSpecialties.emerging\n                    player.partialRisingStar = playerSpecialties.partialRisingStar\n                    player.partialEmerging = playerSpecialties.partialEmerging\n                    \n                    console.log(\"SPECIALTY OVERRIDE \", playerSpecialties)\n\n                }\n                    \n                \n                \n                \n                \n                \n                \n                \n                // Calculate various awards/bonuses\n                let nteamAward = player.nationalTeamPlayer ? 0.33 : 0; \n                let emergingAward = player.emerging ? 0.33 : 0; \n                let partialEmergingAward = player.partialEmerging / 3;\n                let risingStarAward = player.risingStar ? 0.33 : 0; \n                let partialRisingStarAward = player.partialRisingStar / 3;\n                let superStarAward = player.superStar ? 0.75 : 0; \n                \n                // FATMOL calculation combines absind with all awards\n                let tmpFatmol = (player.absind || 0) + nteamAward + emergingAward + \n                               partialEmergingAward + risingStarAward + \n                               partialRisingStarAward + superStarAward;\n                \n                player.fatmol = tmpFatmol;\n                \n                // Track totals and maximums for later calculations\n                totFatmol += player.fatmol;\n                maxFatmol = maxFatmol > player.fatmol ? maxFatmol : player.fatmol;\n            });\n        });\n    });\n    \n    // Calculate average fatmol\n    const avgFatmol = numOfValidPlayers > 0 ? totFatmol / numOfValidPlayers : 0;\n    \n    let minNotZeroEffectiveness = 100;\n    \n    console.log(\"Calculating EFFECTIVENESS AND MATURITY\");\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // EFFECTIVENESS calculation\n                player.effectiveness = maxFatmol > 0 ? ((player.fatmol || 0) / maxFatmol) * 100 : 0;\n                \n                // Track minimum non-zero effectiveness for scaling\n                if (player.effectiveness > 0 && player.effectiveness < minNotZeroEffectiveness) {\n                    minNotZeroEffectiveness = player.effectiveness;\n                }\n                \n                // MATURITY calculation\n                let emergingReward = player.emerging ? 0.5 : 0;\n                let risingStarReward = player.risingStar ? 2 : 0;\n                \n                // Complex maturity formula based on age, fatmol, and rewards\n                if ((player.age || 0) > 33) {\n                    player.maturity = 0;\n                } else {\n                    if ((player.fatmol || 0) < 1.75) {\n                        player.maturity = (player.age || 0) < 23 ? 3 : 1;\n                    } else {\n                        player.maturity = (player.age || 0) < 29 ? 4 : (33 - (player.age || 0));\n                    }\n                    \n                    // Add rewards\n                    player.maturity += emergingReward + risingStarReward;\n                }\n            });\n        });\n    });\n    \n    msg.minNotZeroEffectiveness = minNotZeroEffectiveness;\n    \n    console.log(\"Calculating MOD EFFECTIVENESS\");\n    \n    let minNotZeroUniqueness = 100;\n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            club.Players.forEach(player => {\n                // Modified effectiveness scales the range to use full 0-100\n                player.modEffectiveness = 0;\n                if (minNotZeroEffectiveness < 100) {  // Prevent division by zero\n                    player.modEffectiveness = (((player.effectiveness || 0) - minNotZeroEffectiveness) /\n                                           (100 - minNotZeroEffectiveness)) * 100;\n                }\n                \n                // Calculate uniqueness as weighted average of mod effectiveness and previous uniqueness\n                if (player.effectiveness > 0) {\n                    player.latestUniqueness = (0.7 * player.modEffectiveness) + \n                                             ((player.latestUniqueness || 0) * 0.3);\n                } else {\n                    player.latestUniqueness = 0.7 * player.modEffectiveness;\n                }\n                \n                // Apply scaling transformation to uniqueness\n                if (player.latestUniqueness > 79.1) {\n                    player.latestUniqueness = 100;\n                } else if (player.latestUniqueness > 0 && player.latestUniqueness <= 79.1) {\n                    player.latestUniqueness = Math.sqrt(player.latestUniqueness / 79.1) * 100;\n                }\n                \n                // Track minimum non-zero uniqueness\n                if (player.latestUniqueness > 0 && player.latestUniqueness < minNotZeroUniqueness) {\n                    minNotZeroUniqueness = player.latestUniqueness;\n                }\n            });\n        });\n    });\n    \n    msg.minNotZeroUniqueness = minNotZeroUniqueness;\n    \n    // RELATIVE WEIGHT IN CLUB\n    console.log(\"Calculating RELATIVE WEIGHT IN CLUB\");\n    \n    Object.keys(msg.TheFootballTree).forEach(leagueId => {\n        msg.TheFootballTree[leagueId].Clubs.forEach(club => { \n            // Initialize club totals\n            club.totFatmol = 0;\n            club.exponentialTotFatmol = 0;\n            \n            // Sum up player contributions\n            club.Players.forEach(player => { \n                club.totFatmol += player.fatmol || 0;\n                club.exponentialTotFatmol += Math.pow(player.fatmol || 0, 1.7);\n            });\n        });\n    });\n    \n} catch (e) {\n    console.log(\"Error in economic analysis:\", e);\n}\n\n\nreturn msg;",
         "outputs": 1,
         "timeout": "",
         "noerr": 0,
@@ -8429,8 +8429,395 @@
         "targetType": "full",
         "statusVal": "",
         "statusType": "auto",
-        "x": 1210,
-        "y": 1480,
+        "x": 1270,
+        "y": 1920,
+        "wires": []
+    },
+    {
+        "id": "bb901243d0eaf001",
+        "type": "http in",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "url": "/capologyNums",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 170,
+        "y": 1400,
+        "wires": [
+            [
+                "e4b8c8c798f99e27"
+            ]
+        ]
+    },
+    {
+        "id": "e4b8c8c798f99e27",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "get Capology nums",
+        "func": "msg.topic=\"select max(run) as run from capology_contracts\";\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 430,
+        "y": 1400,
+        "wires": [
+            [
+                "3f3a88fb342a9895"
+            ]
+        ]
+    },
+    {
+        "id": "3f3a88fb342a9895",
+        "type": "mysql",
+        "z": "b59ecb5ade20da39",
+        "mydb": "14f41b2b.4deca5",
+        "name": "STAGE",
+        "x": 620,
+        "y": 1400,
+        "wires": [
+            [
+                "4eb028d59e02dcb9"
+            ]
+        ]
+    },
+    {
+        "id": "4eb028d59e02dcb9",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "El. Num Check",
+        "func": "//msg.elaborationNums.stage = msg.payload[0][0].elaborationNum;\n//msg.elaborationNums.stageSuperstats = msg.payload[1][0].elaborationNum;\n\n//msg.payload=msg.elaborationNums;\n\n\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 1400,
+        "wires": [
+            [
+                "b7248c136e084347",
+                "a4fa3f1d75de62f7"
+            ]
+        ]
+    },
+    {
+        "id": "b7248c136e084347",
+        "type": "debug",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 970,
+        "y": 1400,
+        "wires": []
+    },
+    {
+        "id": "278884ee769d4e2a",
+        "type": "inject",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 1460,
+        "wires": [
+            [
+                "e4b8c8c798f99e27"
+            ]
+        ]
+    },
+    {
+        "id": "a4fa3f1d75de62f7",
+        "type": "http response",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 973.333251953125,
+        "y": 1495.333251953125,
+        "wires": []
+    },
+    {
+        "id": "810c8761d9e70a0e",
+        "type": "http in",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "url": "/optaSquadsNums",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 180,
+        "y": 1580,
+        "wires": [
+            [
+                "158c73a04b61b0d8"
+            ]
+        ]
+    },
+    {
+        "id": "158c73a04b61b0d8",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "get OPTA squads nums",
+        "func": "msg.topic=\"select max(run) as run from OPTA_squads\";\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 1580,
+        "wires": [
+            [
+                "884ef97177ddf97f"
+            ]
+        ]
+    },
+    {
+        "id": "884ef97177ddf97f",
+        "type": "mysql",
+        "z": "b59ecb5ade20da39",
+        "mydb": "14f41b2b.4deca5",
+        "name": "STAGE",
+        "x": 620,
+        "y": 1580,
+        "wires": [
+            [
+                "b354faa9067514ce"
+            ]
+        ]
+    },
+    {
+        "id": "b354faa9067514ce",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "El. Num Check",
+        "func": "//msg.elaborationNums.stage = msg.payload[0][0].elaborationNum;\n//msg.elaborationNums.stageSuperstats = msg.payload[1][0].elaborationNum;\n\n//msg.payload=msg.elaborationNums;\n\n\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 1580,
+        "wires": [
+            [
+                "832d2cf433b0399f",
+                "543501c62724db71"
+            ]
+        ]
+    },
+    {
+        "id": "832d2cf433b0399f",
+        "type": "debug",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 970,
+        "y": 1580,
+        "wires": []
+    },
+    {
+        "id": "cbf5064e6f997e3c",
+        "type": "inject",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 1640,
+        "wires": [
+            [
+                "158c73a04b61b0d8"
+            ]
+        ]
+    },
+    {
+        "id": "543501c62724db71",
+        "type": "http response",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 973.333251953125,
+        "y": 1675.333251953125,
+        "wires": []
+    },
+    {
+        "id": "98713c881778a10d",
+        "type": "http in",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "url": "/optaTransfersNums",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 190,
+        "y": 1760,
+        "wires": [
+            [
+                "4e8dff1caaba0f6e"
+            ]
+        ]
+    },
+    {
+        "id": "4e8dff1caaba0f6e",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "get OPTA trans nums",
+        "func": "msg.topic=\"select max(run) as run from OPTA_transfers\";\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 1760,
+        "wires": [
+            [
+                "dd9873ad25e90b02"
+            ]
+        ]
+    },
+    {
+        "id": "dd9873ad25e90b02",
+        "type": "mysql",
+        "z": "b59ecb5ade20da39",
+        "mydb": "14f41b2b.4deca5",
+        "name": "STAGE",
+        "x": 620,
+        "y": 1760,
+        "wires": [
+            [
+                "377a03c8ecc4ccc3"
+            ]
+        ]
+    },
+    {
+        "id": "377a03c8ecc4ccc3",
+        "type": "function",
+        "z": "b59ecb5ade20da39",
+        "name": "El. Num Check",
+        "func": "//msg.elaborationNums.stage = msg.payload[0][0].elaborationNum;\n//msg.elaborationNums.stageSuperstats = msg.payload[1][0].elaborationNum;\n\n//msg.payload=msg.elaborationNums;\n\n\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 800,
+        "y": 1760,
+        "wires": [
+            [
+                "bd261f5221a8e2ce",
+                "f441114042e9b5fb"
+            ]
+        ]
+    },
+    {
+        "id": "bd261f5221a8e2ce",
+        "type": "debug",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 970,
+        "y": 1760,
+        "wires": []
+    },
+    {
+        "id": "b6422a396859b84f",
+        "type": "inject",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 1820,
+        "wires": [
+            [
+                "4e8dff1caaba0f6e"
+            ]
+        ]
+    },
+    {
+        "id": "f441114042e9b5fb",
+        "type": "http response",
+        "z": "b59ecb5ade20da39",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 973.333251953125,
+        "y": 1855.333251953125,
         "wires": []
     },
     {
@@ -14004,8 +14391,10 @@
         "tls": "",
         "persist": false,
         "proxy": "",
+        "insecureHTTPParser": false,
         "authType": "",
         "senderr": false,
+        "headers": [],
         "x": 910,
         "y": 120,
         "wires": [
@@ -14056,6 +14445,7 @@
         "name": "Areas (OT4)",
         "func": "msg.url=\"https://api.performfeeds.com/soccerdata/areas/3ojq7by6593f19j82edut01zd?_rt=b&_fmt=json\"\nmsg.headers = {\n    Authorization: \"Bearer \"+flow.get(\"Bearer\")\n}\n\n\nreturn msg;",
         "outputs": 1,
+        "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
@@ -14166,6 +14556,7 @@
         "name": "Teams (TM1)",
         "func": "/*\n\tSHN\tSt. Helena\n\tESH\tWestern Sahara\n\tSEU\tSint Eustatius\n\tUMI\tUnited States Minor Outlying Islands\n\tFLK\tFalkland Islands (Malvinas)\n\tPCN\tPitcairn\n\tTKL\tTokelau\n\tSCO\tScotland\n\tSCG\tSerbia and Montenegro\n\tSJM\tSvalbard and Jan Mayen Islands/\n\n\n\n\n*/\n\n// italia 25f2cmb2r8mk5rj92tzer6kvv\n\nmsg.url=\"https://api.performfeeds.com/soccerdata/team/3ojq7by6593f19j82edut01zd?_rt=b&_fmt=json&detailed=yes&ctry=\"+msg.payload.countryId\n\nmsg.headers = {\n    Authorization: \"Bearer \"+flow.get(\"Bearer\")\n}\n\n\nreturn msg;",
         "outputs": 1,
+        "timeout": "",
         "noerr": 0,
         "initialize": "",
         "finalize": "",
